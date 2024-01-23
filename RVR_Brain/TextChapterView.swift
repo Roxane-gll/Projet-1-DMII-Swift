@@ -11,10 +11,10 @@ struct TextChapterView: View {
     var chapter:[TextChapter]
     
     var body: some View {
-        VStack {
+        VStack(alignment: .leading) {
             ForEach(self.chapter, id:\.self) {textChap in
                 if (textChap.typeC == "text") {
-                    Text(textChap.txt).font(.custom("Satoshi-Bold", size: 20)).frame(width:700)
+                    Text(textChap.txt).font(.custom("Satoshi-Bold", size: 20)).frame(width:710, alignment: .leading).padding(.bottom)
                 }
                 if (textChap.typeC == "citation") {
                     ForEach(Array(textChap.citation.keys), id:\.self) { key in
@@ -27,7 +27,7 @@ struct TextChapterView: View {
                     }
                 }
                 if (textChap.typeC == "dialog") {
-                    ForEach(Array(textChap.dialog.keys).reversed(), id:\.self) { key in
+                    ForEach(Array(textChap.dialog.keys), id:\.self) { key in
                         HStack {
                             Rectangle().fill(Color(red:0.91, green:0.19, blue:0.52)).padding().frame(width:35)
                             Text("\(key) : ").font(.custom("Satoshi-Black", size: 20))

@@ -9,11 +9,12 @@ import Foundation
 import SwiftUI
 
 class SpheroObservable:ObservableObject {
-    var soundPlayer = SoundPlayer()
+    var soundPlayer:SoundPlayer = SoundPlayer()
     
     @Published var currentStory:Story = story1
     @Published var currentChapter:Int = 0
     @Published var chapterC:Chapter = story1.chapters[0]
+    @Published var storyStarted:Bool = false
 
     @Published var turnSphero:BoltToy?
     @Published var tapSphero:BoltToy?
@@ -40,13 +41,16 @@ class SpheroObservable:ObservableObject {
     @Published var button1 = 0
     @Published var button2 = 0
     @Published var rotocoder = 0
+    @Published var micro = 0
     
     @Published var interactionStart = [String]()
     var multipleRemoveLine = 4
     var interactionFinished = [String]()
-    var typeInteraction = "visual"
+    @Published var typeInteraction = "visual"
     
-    func startInteraction(type:String) {
+    func startInteraction(type:String, ws:WebsocketObservable) {
+        self.soundPlayer.volumeDown()
+        self.storyStarted = false
         while (!self.narratorColored) {
             self.narratorRemoveLineColor()
         }
@@ -60,11 +64,10 @@ class SpheroObservable:ObservableObject {
         self.tapCount = 0
         self.turnCount = 0
         self.typeInteraction = type
-        self.selectInteraction(type: type)
-        
+        self.selectInteraction(type: type, ws:ws)
     }
     
-    func selectInteraction(type:String) {
+    func selectInteraction(type:String, ws: WebsocketObservable) {
         let interacts = type == "audio" ? Array(self.chapterC.audioInteraction.keys) : self.chapterC.visualIntraction
         if (interacts.count <= 2) {
             self.multipleRemoveLine = 1
@@ -72,7 +75,6 @@ class SpheroObservable:ObservableObject {
             self.multipleRemoveLine = interacts.count <= 4 ? 2 : 4
         }
         for interact in interacts {
-            print(interact)
             self.interactionStart.append(interact)
             if (interact == "turnSphero") {
                 self.turnSphero?.drawMatrix(fillFrom: Pixel(x:0, y:0), to: Pixel(x: 7, y: 7), color: .green)
@@ -82,8 +84,8 @@ class SpheroObservable:ObservableObject {
                 self.tapSphero?.drawMatrix(fillFrom: Pixel(x:0, y:0), to: Pixel(x: 7, y: 7), color: .green)
                 self.tapSpheroInteraction()
             }
-            
         }
+        self.sendInteractionWs(ws: ws, interactions: interacts)
     }
     
     func stopInteraction() {
@@ -105,6 +107,8 @@ class SpheroObservable:ObservableObject {
         self.interactionStart = []
         self.interactionFinished = []
         self.typeInteraction = ""
+        self.storyStarted = true
+        self.soundPlayer.volumeUp()
     }
     
     func narratorRemoveLineColor() {
@@ -136,28 +140,14 @@ class SpheroObservable:ObservableObject {
         self.tapSphero!.sensorControl.interval = 1
         self.tapSphero!.setStabilization(state: SetStabilization.State.off)
         var previousY = 15.0
-        print("active: \(self.isActive), in: \(self.interactionStart)")
         if (self.isActive && self.interactionStart.contains("tapSphero")){
             
             self.tapSphero!.sensorControl.onDataReady = { data in
                 DispatchQueue.main.async {
                     if let acceleration = data.accelerometer?.filteredAcceleration {
                         if (self.tapCount < self.maxTap) {
-                            print(acceleration.y!, previousY)
                             if (acceleration.y! > previousY+0.030 && self.isActive){
-                                self.tapCount = self.tapCount + 1
-                                if (self.typeInteraction == "audio") {
-                                    self.playingAudio(interaction: "tapSphero")
-                                }
-                                if (self.tapCount.isMultiple(of: 2)) {
-                                    self.lightInteractSphero(sphero: "tap")
-                                }
-                                if (self.tapCount.isMultiple(of: self.multipleRemoveLine)){
-                                    self.narratorRemoveLineColor()
-                                }
-                                if (self.tapCount == self.maxTap) {
-                                    self.finishInteract(interaction: "tapSphero")
-                                }
+                                self.tapSpheroTapDone()
                                 previousY = acceleration.y! + 0.5
                             } else {
                                 previousY = acceleration.y!
@@ -168,6 +158,22 @@ class SpheroObservable:ObservableObject {
             }
         } else {
             return
+        }
+    }
+    
+    func tapSpheroTapDone() {
+        self.tapCount = self.tapCount + 1
+        if (self.typeInteraction == "audio") {
+            self.playingAudio(interaction: "tapSphero")
+        }
+        if (self.tapCount.isMultiple(of: 2)) {
+            self.lightInteractSphero(sphero: "tap")
+        }
+        if (self.tapCount.isMultiple(of: self.multipleRemoveLine)){
+            self.narratorRemoveLineColor()
+        }
+        if (self.tapCount == self.maxTap) {
+            self.finishInteract(interaction: "tapSphero")
         }
     }
     
@@ -182,20 +188,7 @@ class SpheroObservable:ObservableObject {
                         if (self.turnCount < self.maxTurn) {
                             if (acceleration.z! > 0.7){
                                 if (self.turnRotation == 0.75) {
-                                    self.turnRotation = 0.0
-                                    self.turnCount = self.turnCount + 1
-                                    if (self.typeInteraction == "audio") {
-                                        self.playingAudio(interaction: "turnSphero")
-                                    }
-                                    if (self.turnCount.isMultiple(of: 2)) {
-                                        self.lightInteractSphero(sphero: "turn")
-                                    }
-                                    if (self.turnCount.isMultiple(of: self.multipleRemoveLine)) {
-                                        self.narratorRemoveLineColor()
-                                    }
-                                    if (self.turnCount == self.maxTurn) {
-                                        self.finishInteract(interaction: "turnSphero")
-                                    }
+                                    self.turnSpheroTurnDone()
                                 }
                             }
                             if (acceleration.z! < 0.5 && acceleration.z! > -0.5) {
@@ -223,13 +216,34 @@ class SpheroObservable:ObservableObject {
         }
     }
     
+    func turnSpheroTurnDone() {
+        self.turnRotation = 0.0
+        self.turnCount = self.turnCount + 1
+        if (self.typeInteraction == "audio") {
+            self.playingAudio(interaction: "turnSphero")
+        }
+        if (self.turnCount.isMultiple(of: 2)) {
+            self.lightInteractSphero(sphero: "turn")
+        }
+        if (self.turnCount.isMultiple(of: self.multipleRemoveLine)) {
+            self.narratorRemoveLineColor()
+        }
+        if (self.turnCount == self.maxTurn) {
+            self.finishInteract(interaction: "turnSphero")
+        }
+    }
+    
     func startStory() {
+        if (!self.storyStarted) {
+            self.soundPlayer.playBackgroundAudio(soundFileName: self.chapterC.backgroundMusic)
+        }
+        self.storyStarted = true
         self.narratorRemoveLineColor()
         Timer.scheduledTimer(withTimeInterval: 3, repeats: false, block:{_ in self.timerFunc()})
     }
     
     func timerFunc() {
-        if (!self.isActive && !self.narratorColored) {
+        if (!self.isActive && !self.narratorColored && self.storyStarted) {
                 self.startStory()
         }
     }
@@ -240,11 +254,23 @@ class SpheroObservable:ObservableObject {
             if (self.button1.isMultiple(of: self.multipleRemoveLine)) {
                 self.narratorRemoveLineColor()
             }
+            if (self.button1 == 8) {
+                finishInteract(interaction: "button1")
+            }
+            if (self.typeInteraction == "audio") {
+                self.playingAudio(interaction: idInput)
+            }
         }
         if (idInput == "button2" && self.button2 < 8) {
             self.button2 = self.button2 + 1
             if (self.button2.isMultiple(of: self.multipleRemoveLine)) {
                 self.narratorRemoveLineColor()
+            }
+            if (self.button2 == 8) {
+                finishInteract(interaction: "button2")
+            }
+            if (self.typeInteraction == "audio") {
+                self.playingAudio(interaction: idInput)
             }
         }
         if (idInput == "rotocoder" && self.rotocoder < 8) {
@@ -252,9 +278,98 @@ class SpheroObservable:ObservableObject {
             if (self.rotocoder.isMultiple(of: self.multipleRemoveLine)) {
                 self.narratorRemoveLineColor()
             }
+            if (self.rotocoder == 8) {
+                finishInteract(interaction: "rotocoder")
+            }
+            if (self.typeInteraction == "audio") {
+                self.playingAudio(interaction: idInput)
+            }
         }
-        if (self.typeInteraction == "audio") {
-            self.playingAudio(interaction: idInput)
+        if (idInput == "micro" && self.micro < 8) {
+            self.micro = self.micro + 1
+            if (self.micro.isMultiple(of: self.multipleRemoveLine)) {
+                self.narratorRemoveLineColor()
+            }
+            if (self.typeInteraction == "audio") {
+                self.playingAudio(interaction: idInput)
+            }
+            if (self.micro == 8) {
+                finishInteract(interaction: "micro")
+            }
+        }
+        if (idInput == "tapSphero" && self.tapCount < 8) {
+            self.tapSpheroTapDone()
+        }
+        if (idInput == "turnSphero" && self.turnCount < 8) {
+            self.turnSpheroTurnDone()
+        }
+    }
+    
+    func webSocketMessage(messages:[WebSocketMessage], ws:WebsocketObservable, wsRover:WebsocketObservable, roverfunc:RoverFunc) {
+        if var message = messages.last {
+            if (message.name == "rpi") {
+                if (message.idInput != nil) {
+                    self.websocketInteraction(idInput: message.idInput!)
+                }
+            }
+            if (message.name == "interact") {
+                if (message.idInput == nil) {
+                    if (message.value == "true") {
+                        self.startInteraction(type: message.value, ws: ws)
+                        if (message.value == "audio") {
+                            roverfunc.roverTurn(ws: wsRover)
+                            var ledColor = WebSocketMessage(name: "leds", value: "\(self.chapterC.interactionColor)").toJsonString()
+                            if (ledColor != nil) {
+                                ws.sendString(string:ledColor!)
+                            }
+                            
+                        }
+                        roverfunc.stopAndGetPosition(ws: wsRover)
+                    } else {
+                        self.stopInteraction()
+                        roverfunc.roverStart(ws:wsRover)
+                        var ledColor = WebSocketMessage(name: "leds", value: "[(76, 207, 215)]").toJsonString()
+                        if (ledColor != nil) {
+                            ws.sendString(string:ledColor!)
+                        }
+                    }
+                }
+                else {
+                    self.changeInteractSelect()
+                }
+            }
+            if (message.name == "chapter") {
+                self.nextChapter()
+                roverfunc.roverHome(ws: wsRover)
+                var ledColor = WebSocketMessage(name: "leds", value: "[(76, 207, 215)]").toJsonString()
+                if (ledColor != nil) {
+                    ws.sendString(string:ledColor!)
+                }
+            }
+            if (message.name == "story") {
+                self.startStory()
+                roverfunc.roverStart(ws:wsRover)
+                var ledColor = WebSocketMessage(name: "leds", value: "[(76, 207, 215)]").toJsonString()
+                if (ledColor != nil) {
+                    ws.sendString(string:ledColor!)
+                }
+            }
+        }
+        
+    }
+    
+    func changeInteractSelect() {
+        var interacts = ["tapSphero"]
+        for interact in interacts {
+            self.interactionStart.append(interact)
+            if (interact == "turnSphero") {
+                self.turnSphero?.drawMatrix(fillFrom: Pixel(x:0, y:0), to: Pixel(x: 7, y: 7), color: .green)
+                self.turnSpheroInteraction()
+            }
+            if (interact == "tapSphero") {
+                self.tapSphero?.drawMatrix(fillFrom: Pixel(x:0, y:0), to: Pixel(x: 7, y: 7), color: .green)
+                self.tapSpheroInteraction()
+            }
         }
     }
     
@@ -273,24 +388,70 @@ class SpheroObservable:ObservableObject {
         if (!self.interactionFinished.contains(interaction)) {
             self.interactionFinished.append(interaction)
         }
-        if (self.interactionFinished.count == self.interactionStart.count) {
-            self.stopInteraction()
+        if (self.interactionStart.sorted() == self.interactionFinished.sorted()) {
+            self.narratoSphero?.clearMatrix()
         }
     }
     
     func nextChapter() {
-        if (self.currentChapter <= self.currentStory.chapters.count) {
-            self.currentChapter += 1
-            self.chapterC = self.currentStory.chapters[self.currentChapter]
+        self.soundPlayer.pauseBackgroundM()
+        if (self.currentChapter == 0) {
+            self.soundPlayer.playSound(soundFileName: "start-chapter-end", fileType: "wav")
         }
+        print(self.currentStory.chapters)
+        self.storyStarted = false
+        if (self.currentStory.chapters[self.currentChapter] != self.currentStory.chapters.last) {
+            self.currentChapter += 1
+        } else {
+            self.currentChapter = 0
+        }
+        print(self.currentChapter)
+        self.chapterC = self.currentStory.chapters[self.currentChapter]
+        
     }
     
     func playingAudio(interaction:String) {
         var sound = self.chapterC.audioInteraction[interaction]
         if (sound != nil) {
-            print(sound!)
             self.soundPlayer.playSound(soundFileName: sound!)
         }
-        
+    }
+    
+    func sendInteractionWs(ws:WebsocketObservable, interactions:[String]) {
+        print(interactions)
+        var newMessage = WebSocketStartInteract(name: "interact")
+        for interact in interactions {
+            newMessage.value[interact] = "true"
+        }
+        if (newMessage.value.count > 0) {
+            var message = newMessage.toJsonString()
+            if (message != nil) {
+                ws.sendString(string: message!)
+            }
+        }
+    }
+    
+    func randomChapter() {
+        self.currentStory.chapters = []
+        for chap in self.currentStory.chosingFromChapter.keys.sorted(by: { a, b in
+            return a < b
+        }) {
+            if self.currentStory.chosingFromChapter[chap]!.count == 1 {
+                self.currentStory.chapters.append( self.currentStory.chosingFromChapter[chap]![0])
+            } else {
+                var random = Int.random(in: 0..<self.currentStory.chosingFromChapter[chap]!.count)
+                self.currentStory.chapters.append(self.currentStory.chosingFromChapter[chap]![random])
+            }
+        }
+        self.currentChapter = 0
+        self.chapterC = self.currentStory.chapters[0]
+    }
+    
+    func resumeSphero(ws:WebsocketObservable) {
+        if (self.isActive) {
+            self.startInteraction(type: self.typeInteraction, ws: ws)
+        } else {
+            self.stopInteraction()
+        }
     }
 }

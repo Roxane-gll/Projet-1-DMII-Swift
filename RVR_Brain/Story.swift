@@ -10,6 +10,7 @@ struct Story:Equatable {
     var id:Int
     var title:String
     var chapters:[Chapter]
+    var chosingFromChapter:[Int:[Chapter]]
 }
 
-var story1 = Story(id: 1, title: "Story 1", chapters: [chaper1, chaper2])
+

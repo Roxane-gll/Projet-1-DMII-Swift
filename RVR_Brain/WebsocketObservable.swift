@@ -16,6 +16,8 @@ class WebsocketObservable:ObservableObject {
     @Published var isConnected = false
     @Published var protection = true
     @Published var messages = [WebSocketMessage]()
+    @Published var roverMessages = [RoverReturn]()
+    var rover = false
     
     init(urlString:String){
         websocketManager = WebsocketManager()
@@ -34,12 +36,14 @@ class WebsocketObservable:ObservableObject {
         websocketManager.connect {
             self.isConnected = true
             self.protection = false
+        }
+        self.listenForMessage()
+        if (!self.rover) {
             var jsonC = WebSocketMessage(name: "connection", value: "sphero").toJsonString()
             if (jsonC != nil) {
                 self.sendString(string: jsonC!)
             }
         }
-        self.listenForMessage()
     }
     
     func disconnect() {
@@ -47,17 +51,37 @@ class WebsocketObservable:ObservableObject {
             self.isConnected = false
             self.protection = true
         }
+        
+    }
+    
+    func reconnect() {
+        self.connect()
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: false, block:{_ in self.timerFunc()})
+    }
+
+    func timerFunc() {
+        if (!self.isConnected) {
+            self.reconnect()
+        }
     }
     
     func sendString(string:String){
         websocketManager.sendData(string: string)
     }
-    
-    func listenForMessage(){
+
+    func listenForMessage() {
         websocketManager.listenForMessage { str in
-            var message = WebSocketMessage.fromJson(jsonString: str)
-            if (message != nil) {
-                self.messages.append(message!)
+            if (self.rover) {
+                print("sting : \(str)")
+                var message = RoverReturn.fromJson(jsonString: str)
+                if (message != nil) {
+                    self.roverMessages.append(message!)
+                }
+            } else {
+                var message = WebSocketMessage.fromJson(jsonString: str)
+                if (message != nil && message?.name == "rpi") {
+                    self.messages.append(message!)
+                }
             }
         }
     }
